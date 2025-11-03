@@ -2,31 +2,76 @@ import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple
-import yaml
 import pandas as pd
 from src.sentiment.sentiment_scorer import SentimentScorer
 from src.ingestor.statement_ingestor import StatementIngestor
 from src.ingestor.pressconf_ingestor import PressConfIngestor
-from models.transcript import Transcript
+from src.models.transcript import Transcript
 from src.tools.logging_config import get_logger
-from models.fomc_event import FOMCEvent
+from src.models.fomc_event import FOMCEvent
 
 logger = get_logger(__name__)
 
 
-class FOMCPipeline:
+class NLPPipeline:
     """
     Main pipeline for FOMC sentiment analysis.
+
+    This variant does NOT read a config YAML. All relevant parameters are
+    provided to the constructor. The statement/pressconf directory path is
+    fixed by default to the project's cache location (data/_cache/fomc_data)
+    unless explicitly overridden.
     """
 
-    def __init__(self, config_path: str):
+    def __init__(
+        self,
+        data_path: str | Path = "data/_cache/fomc_data",
+        model: str = "gtfintechlab/FOMC-RoBERTa",
+        max_tokens: int = 510,
+        stride: int = 96,
+        max_workers: int = 4,
+        fomc_time: str = "14:00:00",
+        qa_time: str = "14:30:00",
+        sentiment_cache: str = "data/_cache/raw_sentiment/raw_sentiment_cache.csv",
+        date_fmt: str = "%Y%m%d",
+    ) -> None:
         """
         Params:
-            config_path: str
-                Path of the yaml configuration file
+            data_path: str | Path (default "data/_cache/fomc_data")
+                Path to the directory containing FOMC statement and press conference PDFs.
+            model: str (default "gtfintechlab/FOMC-RoBERTa")
+                Name of the NLP model to use for sentiment analysis.
+            max_tokens: int (default 510)
+                Maximum number of tokens per chunk for NLP processing.
+            stride: int (default 96)
+                Stride size for chunking text for NLP processing.
+            max_workers: int (default 4)
+                Maximum number of parallel workers for processing.
+            output_path: str | None (default None)
+                Path to save the output results. If None, results are not saved to a file.
+            fomc_time: str (default "14:00:00")
+                Time of the FOMC statement release.
+            qa_time: str (default "14:30:00")
+                Time of the FOMC press conference Q&A session.
+            sentiment_cache: str (default "sentiment_cache.csv")
+                Path to the sentiment cache file.
+            date_fmt: str (default "%Y%m%d")
+                Date format used in file names.
         """
-        self._read_config(config_path)
+        self.data_path = Path(data_path)
 
+        # model / tokenization options
+        self.model = model
+        self.max_tokens = int(max_tokens)
+        self.stride = int(stride)
+        self.max_workers = int(max_workers)
+
+        self.fomc_time = fomc_time
+        self.qa_time = qa_time
+        self.sentiment_cache = sentiment_cache
+        self.date_fmt = date_fmt
+
+        # pipeline components
         self.ing_stmt = StatementIngestor(
             model=self.model, max_tokens=self.max_tokens, stride=self.stride
         )
@@ -35,73 +80,49 @@ class FOMCPipeline:
         )
 
         self.scorer = SentimentScorer(model=self.model)
-
-        # Prepare the file paths and the date for possible multi-threading 
         self.pairs: List[Tuple[str, Path, Path]] = []
 
-    def _read_config(self, config_path: str) -> None:
-        """
-        Read the yaml configuration file.
-
-        Params:
-            config_path: str
-                Path of the yaml configuration file
-        """
-        logger.info("Reading configuration file...")
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.cfg = yaml.safe_load(f)
-
-        self.statement_dir = Path(self.cfg.get("statement_dir", "."))
-        self.pressconf_dir = Path(self.cfg.get("pressconf_dir", "."))
-        self.re_stmt = re.compile(self.cfg.get("statement_regex", r"(?i)monetary(\d{8})a1\.pdf$"))
-        self.re_pc   = re.compile(self.cfg.get("pressconf_regex", r"(?i)FOMCpresconf(\d{8})\.pdf$"))
-        self.date_fmt = self.cfg.get("date_fmt", "%Y%m%d")
-        self.model = self.cfg.get("model")
-        self.max_tokens  = int(self.cfg.get("max_tokens", 510))
-        self.stride      = int(self.cfg.get("stride", 96))
-        self.max_workers = int(self.cfg.get("max_workers", 4))
-        self.output_path  = self.cfg.get("output_path", None)
-        self.fomc_time = self.cfg.get("fomc_time", "14:00:00")
-        self.qa_time   = self.cfg.get("qa_time", "14:30:00")
-        self.sentiment_cache = self.cfg.get("sentiment_cache", "sentiment_cache.csv")
-
     # -------------------- Public method --------------------
-    def run(self, use_cache: bool) -> pd.DataFrame:
+    def run(self, 
+            use_cache: bool=True,
+            save_cache: bool=True,
+            save_cache_name: str="raw_sentiment_cache.csv") -> list[FOMCEvent]:
         """
         Orchestrator of the full pipeline :
+
+        1. If use_cache is True:
+            - Check if the cache file exists
+            - If it does, load the results from the cache
+            - If it doesn't, proceed with the normal processing
+
+        2. Normal processing:
             - Get the transcripts for each date
             - Execution by date
             - Output gathering
 
         Params:
-            use_cache: bool
+            use_cache: bool (default False)
                 Whether to use cached results if available
+            save_cache: bool (default False)
+                Whether to save the results to cache
+            cache_name: str (default f"sentiment_cache_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+                Name of the cache file
+
+        Returns:
+            list[FOMCEvent]
+                List of FOMCEvent objects containing the results
         """
         logger.info("Pipeline run started")
 
         res: List[FOMCEvent] = []
 
         if use_cache:
-            logger.info("Using cached results if available")
-            try:
-                df_cache = pd.read_csv(self.sentiment_cache)
-                logger.info("Loaded cached results with %d entries", len(df_cache))
-                res = [
-                    FOMCEvent(
-                        meeting_date=row["meeting_date"],
-                        t_statement=datetime.strptime(row["t_statement"], "%Y-%m-%d %H:%M:%S"),
-                        t_pressconf=datetime.strptime(row["t_pressconf"], "%Y-%m-%d %H:%M:%S"),
-                        score_stmt=row["score_stmt"],
-                        score_qa=row["score_qa"],
-                        delta_score=row["delta_score"],
-                    )
-                    for _, row in df_cache.iterrows()
-                ]
-
+            res = self._get_cache()
+            if res:
+                logger.info("Using cached results, skipping processing.")
                 return res
-            
-            except FileNotFoundError:
-                logger.info("No cache file found, proceeding with full processing")
+            else:
+                logger.info("No cached results found, proceeding with full processing.")
 
         self._get_files()
         logger.info("Found %d date pairs to process", len(self.pairs))
@@ -113,35 +134,12 @@ class FOMCPipeline:
             except Exception as e:
                 logger.exception("Error processing date %s: %s", date_str, e)
 
+        if save_cache:
+            self._to_cache(res, save_cache_name)
+
         return res
+    
     # --------------------  Private utilities --------------------
-    def _get_files(self) -> List[Tuple[str, Path, Path]]:
-        """
-        Gets all the file pairs : Statement / Q&A with the corresponding date.
-
-        Returns:
-            List[Tuple[str, Path, Path]]
-                List of file path pairs and their date
-        """
-        logger.info("Gathering statement and press conference files...")
-        stmt_files = {}
-        for p in self.statement_dir.glob("**/*.pdf"):
-            m = self.re_stmt.search(p.name)
-            if m:
-                stmt_files[m.group(1)] = p.resolve()
-
-        pc_files = {}
-        for p in self.pressconf_dir.glob("**/*.pdf"):
-            m = self.re_pc.search(p.name)
-            if m:
-                pc_files[m.group(1)] = p.resolve()
-
-        common = sorted(set(stmt_files.keys()) & set(pc_files.keys()))
-        self.pairs = [(d, stmt_files[d], pc_files[d]) for d in common]
-        logger.info("Statement files: %d, PressConf files: %d", len(stmt_files), len(pc_files))
-
-        return self.pairs
-
     def _process_date(self, date_str: str, stmt_path: Path, pc_path: Path) -> Dict:
         """
         Process the data for a specific date as follows:
@@ -164,9 +162,9 @@ class FOMCPipeline:
         logger.info("Processing date %s", date_str)
         dt = datetime.strptime(date_str, self.date_fmt)
 
-        logger.info("\tIngesting statement")
+        logger.debug("\tIngesting statement")
         t_stmt: Transcript = self.ing_stmt.ingest(pdf_path=str(stmt_path), meeting_date=dt)
-        logger.info("\tIngesting press conference")
+        logger.debug("\tIngesting press conference")
         t_pc: Transcript = self.ing_pc.ingest(pdf_path=str(pc_path), meeting_date=dt)
 
         logger.info("\tScoring statement")
@@ -183,3 +181,72 @@ class FOMCPipeline:
             score_qa=s_pc,
             delta_score=s_pc - s_stmt,
         )
+
+    def _get_files(self) -> List[Tuple[str, Path, Path]]:
+        """
+        Gets all the file pairs : Statement / Q&A with the corresponding date.
+
+        Returns:
+            List[Tuple[str, Path, Path]]
+                List of file path pairs and their date
+        """
+        logger.info("Gathering statement and press conference files...")
+        pairs: List[Tuple[str, Path, Path]] = []
+
+        pattern_stmt = re.compile(r"^statement\.(pdf|html?)$", re.IGNORECASE)
+        pattern_pc   = re.compile(r"^pressconf\.(pdf|html?)$", re.IGNORECASE)
+
+        for meeting_dir in sorted(self.data_path.iterdir()):
+            if not meeting_dir.is_dir():
+                continue
+
+            date_str = meeting_dir.name
+
+            stmt_path = next((p.resolve() for p in meeting_dir.iterdir() if pattern_stmt.match(p.name)), None)
+            pc_path   = next((p.resolve() for p in meeting_dir.iterdir() if pattern_pc.match(p.name)), None)
+
+            if stmt_path and pc_path:
+                pairs.append((date_str, stmt_path, pc_path))
+            else:
+                logger.debug(
+                    "Skipping %s (statement=%s, pressconf=%s)",
+                    date_str, bool(stmt_path), bool(pc_path)
+                )
+                
+        self.pairs = pairs
+        logger.info("Found %d valid meetings with both statement & pressconf", len(pairs))
+
+        return pairs
+
+    def _get_cache(self) -> List[FOMCEvent]:
+        """
+        Load cached sentiment scores if available.
+
+        Returns:
+            List[FOMCEvent]
+                List of cached sentiment events
+        """
+        logger.info("Using cached results if available")
+        try:
+            df_cache = pd.read_csv(self.sentiment_cache)
+            logger.info("Loaded cached results with %d entries", len(df_cache))
+            res = [FOMCEvent.from_dict(row.to_dict()) for _, row in df_cache.iterrows()]
+
+            return res
+
+        except FileNotFoundError:
+            return []
+
+    def _to_cache(self, events: List[FOMCEvent], cache_name: str) -> None:
+        """
+        Save the sentiment events to the cache.
+
+        Params:
+            events: List[FOMCEvent]
+                List of sentiment events to cache
+            cache_name: str
+                Name of the cache file
+        """
+        logger.info("Saving results to cache")
+        df = pd.DataFrame([e.to_dict() for e in events])
+        df.to_csv(f"data/_cache/raw_sentiment/{cache_name}", index=False)

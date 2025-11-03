@@ -49,7 +49,12 @@ class SentimentScorer:
         Analyse the sentiment of a transcript, chunk by chunk, based on token id chunks.
         Uses mini-batching to speed up large transcripts (press conferences).
 
-        Params:
+        Convention:
+            0   = very dovish
+            5   = neutral
+            10  = very hawkish
+
+        Params: 
             transcript :
                 Transcript object with token_chunks: List[List[int]]
             batch_size : int (default 32)
@@ -77,7 +82,7 @@ class SentimentScorer:
             probs = F.softmax(logits, dim=-1)
             p_dovish = probs[:, 0]
             p_hawkish = probs[:, 1]
-            batch_scores = 5.0 + 5.0 * (p_dovish - p_hawkish)
+            batch_scores = 5.0 + 5.0 * (p_hawkish - p_dovish)
 
             scores.extend(batch_scores.cpu().tolist())
 

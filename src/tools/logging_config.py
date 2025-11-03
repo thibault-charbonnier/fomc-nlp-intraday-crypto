@@ -1,86 +1,59 @@
-"""Modern console logging configuration using rich.
-
-Provides get_logger(name) to obtain a configured logger. Uses LOG_LEVEL env var
-to set the level (default INFO). Integrates RichHandler for pretty console output
-and includes a helper function to enable logging for other libraries.
-"""
-from __future__ import annotations
-
 import logging
-import os
+import sys
 from typing import Optional
 
-try:
-    from rich.logging import RichHandler  # type: ignore
-    _RICH_AVAILABLE = True
-except Exception:  # pragma: no cover - fallback when rich isn't installed
-    import logging as _logging
-
-    class RichHandler(_logging.StreamHandler):
-        """Lightweight fallback handler when rich isn't available.
-
-        It behaves like a normal StreamHandler so the rest of the code can
-        continue to call RichHandler(...).
-        """
-
-        def __init__(self, *args, **kwargs):
-            super().__init__()
-
-    _RICH_AVAILABLE = False
-
-
-def _get_log_level() -> int:
-    level_str = os.getenv("LOG_LEVEL", "INFO").upper()
-    return getattr(logging, level_str, logging.INFO)
-
-
-def configure_root_logger(level: Optional[int] = None) -> None:
-    """Configure the root logger with RichHandler.
-
-    This is idempotent — calling multiple times won't duplicate handlers.
+def setup_logging(level: int = logging.INFO) -> None:
     """
-    if level is None:
-        level = _get_log_level()
+    Configure global logging for the whole project (scripts, notebooks).
 
+    - Clears any existing handlers (so we don't get duplicated logs).
+    - Installs a single StreamHandler to stdout.
+    - Applies a compact formatter with timestamp / level / message.
+    - Sets same behavior for terminal and notebook.
+
+    Params:
+        level : int (default logging.INFO)
+            Minimum log level to display.
+    """
     root = logging.getLogger()
-    # Avoid adding multiple RichHandlers if already present
-    if any(isinstance(h, RichHandler) for h in root.handlers):
-        root.setLevel(level)
-        return
 
-    fmt = "%(message)s"
-    datefmt = "%Y-%m-%d %H:%M:%S"
+    for h in list(root.handlers):
+        root.removeHandler(h)
 
-    if _RICH_AVAILABLE:
-        handler = RichHandler(rich_tracebacks=True)
-    else:
-        handler = logging.StreamHandler()
+    handler = logging.StreamHandler(stream=sys.stdout)
     handler.setLevel(level)
 
+    fmt = "%(asctime)s %(levelname)-5s %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
     formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
+
     handler.setFormatter(formatter)
 
-    root.handlers = []
     root.addHandler(handler)
     root.setLevel(level)
 
+    root.propagate = False
 
-def get_logger(name: str) -> logging.Logger:
-    """Return a logger configured to use Rich for console output.
+    for noisy in ("urllib3", "requests", "transformers"):
+        lib_logger = logging.getLogger(noisy)
+        lib_logger.setLevel(logging.WARNING)
+        lib_logger.propagate = True
 
-    Example:
-        logger = get_logger(__name__)
-        logger.info("Starting pipeline")
+def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
     """
-    configure_root_logger()
-    return logging.getLogger(name)
+    Return a module-specific logger.
 
+    Usage in code:
+        logger = get_logger(__name__)
 
-def enable_external_library_logging(name: str, level: Optional[int] = None) -> None:
-    """Enable logging for an external library (like requests) at the given level."""
-    if level is None:
-        level = _get_log_level()
+    Behavior:
+    - Does NOT create new handlers.
+    - Just returns a child logger of root.
+    - Optionally lets you bump level for a given sub-module.
+    """
     logger = logging.getLogger(name)
-    logger.setLevel(level)
-    # propagate to root which is handled by RichHandler
+    if level is not None:
+        logger.setLevel(level)
+
     logger.propagate = True
+    return logger

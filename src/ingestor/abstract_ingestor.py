@@ -1,9 +1,11 @@
 import re
 from typing import List
+from pathlib import Path
 from datetime import datetime
+from bs4 import BeautifulSoup
 from pdfminer.high_level import extract_text
 from src.tools.chunker import Chunker
-from models.transcript import Transcript
+from src.models.transcript import Transcript
 from abc import ABC
 
 
@@ -47,7 +49,15 @@ class BasePdfIngestor(ABC):
             Transcript
                 The processed transcript object.
         """
-        raw_text = self._pdf_to_text(pdf_path)
+        path = Path(pdf_path)
+
+        if path.suffix.lower() == ".pdf":
+            raw_text = self._pdf_to_text(pdf_path)
+        elif path.suffix.lower() in [".htm", ".html"]:
+            raw_text = self._html_to_text(pdf_path)
+        else:
+            raise ValueError(f"Unsupported file format: {path.suffix}")
+        
         cleaned_text = self._clean_text(raw_text)
         chunks = self._chunk_text(cleaned_text)
 
@@ -103,6 +113,39 @@ class BasePdfIngestor(ABC):
         """
         return extract_text(path)
 
+    @staticmethod
+    def _html_to_text(path: str) -> str:
+        """
+        Extract text from an HTML file located.
+
+        Params:
+            path : str
+                Path to the HTML file.
+
+        Returns:
+            str
+                Extracted text from the HTML.
+        """
+        with open(path, "rb") as f:
+            html = f.read().decode("utf-8", errors="ignore")
+        soup = BeautifulSoup(html, "html.parser")
+
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+
+        container = (
+            soup.select_one("#article")
+            or soup.select_one("article")
+            or soup.select_one("main")
+            or soup.body
+            or soup
+        )
+
+        for tag in container.select("nav, header, footer, form, aside, .share, .shareDL__dropdown"):
+            tag.decompose()
+
+        return container.get_text("\n", strip=True)
+    
     @staticmethod
     def _basic_clean(text: str) -> str:
         t = text.replace("\r", "\n")

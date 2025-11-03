@@ -41,7 +41,7 @@ class MarketDataLoader:
             4) return the requested slice
     """
 
-    def __init__(self, data_dir: str) -> None:
+    def __init__(self, data_dir: str="data/_cache/market_data") -> None:
         """
         Params:
             data_dir : str
@@ -54,7 +54,8 @@ class MarketDataLoader:
              symbol: str,
              start_ts: datetime,
              end_ts: datetime,
-             force_fetch: bool = False) -> pd.DataFrame:
+             force_fetch: bool = False,
+             save_day_cache: bool = True) -> pd.DataFrame:
         """
         Load 1-minute spot market data for a given symbol over [start_ts, end_ts].
 
@@ -73,22 +74,21 @@ class MarketDataLoader:
             pd.DataFrame
                 Minute-level OHLCV data indexed by timestamp (UTC).
         """
-        logger.info(
+        logger.debug(
             "Loading market data for %s between %s and %s (force_fetch=%s)",
             symbol, start_ts, end_ts, force_fetch
         )
+        start_ts = pd.to_datetime(start_ts, utc=True)
+        end_ts = pd.to_datetime(end_ts, utc=True)
 
-        # Step 1: try loading local cache
         df_full = self._load_local_cache(symbol)
         if df_full is not None:
             logger.debug("Local cache loaded for %s with %d rows", symbol, len(df_full))
         else:
             logger.debug("No local cache for %s", symbol)
 
-        # Step 2: fetch missing range (or full range if force_fetch)
         df_remote = self._fetch_remote(symbol, start_ts, end_ts, force_fetch=force_fetch)
 
-        # Step 3: merge cache + fetched
         if df_full is None:
             df_merged = df_remote
         else:
@@ -97,17 +97,75 @@ class MarketDataLoader:
             else:
                 df_merged = df_full
 
-        # Step 4: write updated cache locally
         if df_merged is not None and not df_merged.empty:
             self._write_local_cache(symbol, df_merged)
 
-        # Step 5: return requested slice
+            if save_day_cache:
+                try:
+                    for day, df_day in df_merged.groupby(df_merged.index.date):
+                        day_str = pd.to_datetime(day).strftime("%Y-%m-%d")
+                        self._write_day_cache(symbol, day_str, df_day)
+                except Exception:
+                    logger.exception("Failed to write per-day cache for %s", symbol)
+
         if df_merged is None or df_merged.empty:
             logger.error("No data available for %s in requested range", symbol)
             return pd.DataFrame()
 
         df_slice = self._subset_range(df_merged, start_ts, end_ts)
         return df_slice
+
+    # -------------------- Per-day cache helpers --------------------
+    def _day_cache_path(self, symbol: str, day_str: str) -> Path:
+        """
+        Path for per-day cache file: data_dir/_cache/market_data/{symbol}/{YYYY-MM-DD}.parquet
+        """
+        base = self.data_dir / symbol
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"{day_str}.parquet"
+
+    def _load_day_cache(self, symbol: str, day_str: str) -> Optional[pd.DataFrame]:
+        """
+        Load a single-day cache for a symbol if present.
+        Returns a DataFrame indexed by UTC timestamp or None.
+        """
+        path = self._day_cache_path(symbol, day_str)
+        if not path.exists():
+            return None
+
+        try:
+            df = pd.read_parquet(path)
+        except Exception:
+            logger.exception("Failed to read day cache %s", path)
+            return None
+
+        # Ensure timestamp index and sorting
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            df = df.set_index("timestamp")
+
+        df = df.sort_index()
+
+        # Basic sanity check
+        if "close" not in df.columns:
+            logger.error("Day cache %s missing 'close' column", path)
+            return None
+
+        return df
+
+    def _write_day_cache(self, symbol: str, day_str: str, df: pd.DataFrame) -> None:
+        """
+        Write a single-day cache parquet for a symbol.
+        The DataFrame is expected to be indexed by UTC timestamp.
+        """
+        path = self._day_cache_path(symbol, day_str)
+        try:
+            df_to_save = df.copy()
+            if df_to_save.index.name is None:
+                df_to_save.index.name = "timestamp"
+            df_to_save.reset_index().to_parquet(path, index=False)
+        except Exception:
+            logger.exception("Failed to write day cache %s", path)
 
     # -------------------- Private utilities --------------------
     def _load_local_cache(self, symbol: str) -> Optional[pd.DataFrame]:
