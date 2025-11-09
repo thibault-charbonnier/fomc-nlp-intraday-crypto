@@ -1,7 +1,39 @@
 import pandas as pd
 import numpy as np
 import ast
-from typing import List, Literal
+from typing import List, Literal, Dict, List
+
+def parse_csv(csv_path: str,
+              reactions_mapping: Dict[str, List[int]]) -> pd.DataFrame:
+    """
+    Parse the enriched sentiment CSV and expand reactions columns.
+
+    Params:
+        csv_path: str
+            Path to the enriched sentiment CSV file.
+        reactions_mapping: Dict[str, int]
+            Mapping of symbols to their respective horizons.
+            Ex : {"BTCUSDT": [1, 2, ...], "ETHUSDT": [1, 2, ...]}
+    """
+    df = pd.read_csv(csv_path)
+
+    def _parse_reactions(row: pd.Series, reactions_mapping: Dict[str, List[int]]) -> pd.Series:
+        reactions_dict = ast.literal_eval(row["reactions"])
+
+        for symbol, reactions in reactions_dict.items():
+            horizon_mapping = reactions_mapping[symbol]
+            if len(horizon_mapping) != len(reactions):
+                raise ValueError(f"Horizon mapping length does not match reactions length for symbol {symbol}.")
+            else:
+                for i in range(len(horizon_mapping)):
+                    col_name = f"{symbol}_{horizon_mapping[i]}m_bps"
+                    row[col_name] = reactions[i]
+        return row
+    
+    df = df.apply(lambda row: _parse_reactions(row, reactions_mapping), axis=1)
+
+    return df.drop(columns=["reactions"])
+
 
 
 def load_event_data(
@@ -273,3 +305,74 @@ def build_returns_long_format(
     out = pd.DataFrame(long_rows)
     out = out.sort_values(["meeting_date", "symbol", "horizon_min"]).reset_index(drop=True)
     return out
+
+
+def expand_reactions_csv(
+    csv_path: str,
+    reactions_horizons: dict,
+    col_template: str = "{sym}_{h}m_bps",
+    reactions_col: str = "reactions",
+    dayfirst: bool = True,
+) -> pd.DataFrame:
+    """
+    Lecture simple du CSV `full_sentiment_cache.csv` et expansion de la colonne
+    `reactions` en colonnes par symbole/horizon.
+
+    Params:
+        csv_path: chemin vers le CSV (str)
+        reactions_horizons: dict mapping symbol -> list of horizons (e.g. {"BTCUSDT":[1,2,5]})
+        col_template: template de nommage des colonnes (par défaut "{sym}_{h}m_bps")
+        reactions_col: nom de la colonne contenant les réactions sérialisées
+        dayfirst: param pour pd.to_datetime
+
+    Retourne:
+        pd.DataFrame: DataFrame original enrichi avec les colonnes demandées
+    """
+    # version simplifiée: on suppose reactions est dict[str, List[float]]
+    df = pd.read_csv(csv_path)
+
+    df["meeting_date"] = pd.to_datetime(
+        df.get("meeting_date", None), dayfirst=dayfirst, utc=True, errors="coerce"
+    )
+
+    # créer les colonnes vides demandées
+    for sym, horizons in reactions_horizons.items():
+        for h in horizons:
+            col = col_template.format(sym=sym, h=h)
+            if col not in df.columns:
+                df[col] = np.nan
+
+    # parser très simple: si string -> ast.literal_eval, sinon on espère un dict
+    def _parse_simple(cell: object):
+        if pd.isna(cell):
+            return None
+        if isinstance(cell, str):
+            try:
+                return ast.literal_eval(cell)
+            except Exception:
+                return None
+        return cell
+
+    for idx, row in df.iterrows():
+        parsed = _parse_simple(row.get(reactions_col, None))
+        if not isinstance(parsed, dict):
+            continue
+
+        for sym, horizons in reactions_horizons.items():
+            vals = parsed.get(sym, None)
+            if vals is None:
+                continue
+            # on attend une liste/tuple de valeurs dans l'ordre des horizons
+            if not isinstance(vals, (list, tuple, np.ndarray)):
+                continue
+            for i, v in enumerate(vals):
+                if i >= len(horizons):
+                    break
+                h = horizons[i]
+                col = col_template.format(sym=sym, h=h)
+                try:
+                    df.at[idx, col] = float(v)
+                except Exception:
+                    df.at[idx, col] = np.nan
+
+    return df

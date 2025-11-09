@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 import numpy as np
 from datetime import timedelta, datetime
@@ -182,16 +183,33 @@ class MarketProcessor:
         return s
 
     def _save_events(self,
-                     events: List[FOMCEvent],
-                     filepath: str="data/_cache/full_sentiment/full_sentiment_cache.csv") -> None:
+                    events: List[FOMCEvent],
+                    filepath: str = "data/_cache/full_sentiment/full_sentiment_cache.csv") -> None:
         """
-        Save a list of FOMCEvents to a CSV file.
+        Save processed events with reactions to a CSV file.
 
         Params:
             events : List[FOMCEvent]
-                List of events to save.
+                List of processed FOMC events.
             filepath : str
-                Path to the output CSV file.
+                Path to save the CSV file.
         """
-        df = pd.DataFrame([e.to_dict() for e in events])
-        df.to_csv(filepath, index=False)
+        rows = []
+        for e in events:
+            base = e.to_dict() if hasattr(e, "to_dict") else vars(e).copy()
+            reactions = base.pop("reactions", None)
+            if reactions is None:
+                reactions = getattr(e, "reactions", {})
+
+            row = dict(base)
+
+            for symbol, series in (reactions or {}).items():
+                for i in range(len(self.windows)):
+                    col = f"{symbol}_{int(self.windows[i])}m"
+                    val = series[i]
+                    row[col] = float(val) if pd.notna(val) else np.nan
+
+            rows.append(row)
+
+        pd.DataFrame(rows).to_csv(filepath, index=False)
+
