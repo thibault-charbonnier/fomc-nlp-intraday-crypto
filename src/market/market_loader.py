@@ -299,10 +299,6 @@ class MarketDataLoader:
                                            symbol: str,
                                            start_ts: datetime,
                                            end_ts: datetime) -> Optional[pd.DataFrame]:
-        """
-        Replacement for the old 'Cryptowatch' fallback (now disabled).
-        Tries Bitstamp first, then Coinbase Exchange.
-        """
         bitstamp_pair, coinbase_product = self._map_to_usd_pairs(symbol)
 
         # 1) Bitstamp
