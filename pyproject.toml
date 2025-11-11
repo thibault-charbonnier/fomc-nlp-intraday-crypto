@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fomc-hf-nlp"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Statistical Study of High Frequency Crypto Reactions to FOMC NLP Tone"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,10 +36,10 @@ dependencies = [
   "accelerate>=0.33",
   "torch>=2.2",
   "tokenizers>=0.15",
+  "seaborn>=0.13",
 ]
 
 [project.optional-dependencies]
-plots = ["seaborn>=0.13"]
 io = ["pyarrow>=14.0"]
 dev = ["pytest>=8", "ruff>=0.6", "black>=24.4", "build", "twine"]
 
