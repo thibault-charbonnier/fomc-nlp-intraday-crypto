@@ -9,6 +9,18 @@
 
 ---
 
+> ## Install the library
+>
+> Building the data infrastructure (scrapers, parsers, event alignment, crypto return engine, nlp scoring) took a fair amount of work.  
+> To make it reusable, I’m packaging it as a Python library published on PyPI.
+>
+> **Package :** `https://pypi.org/project/fomc-hf-nlp`  
+> **Github Repository :** `https://github.com/thibault-charbonnier/fomc-nlp-intraday-crypto`
+>
+> **To install :** `pip install fomc-hf-nlp`
+
+---
+
 ## Abstract
 
 This empirical study examines various cryptocurrencies' intraday reactions to U.S. monetary-policy communication and reaches a conclusion consistent with recent literature: crypto returns appear **orthogonal to monetary policy at high frequency**. Using an NLP-based tone score on FOMC statements and press-conference transcripts to proxy policy stance, we find **no statistically significant predictive power** for the sign nor magnitude of returns (10–60m horizons). However, distributions differ in the **tails**: **most dovish** vs **most hawkish** events display **significant asymmetry** (heavier right vs left tails). Results should be read with caution given **structural data limits** (few FOMC events; limited minute-level crypto history).
