@@ -222,5 +222,3 @@ def plot_fedfunds_aligned(df: pd.DataFrame, fed_csv: Path, outpath: Path,
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(mdates.AutoDateLocator()))
 
     fig.tight_layout()
-    out = outpath
-    fig.savefig(out, dpi=200)

@@ -3,12 +3,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple
 import pandas as pd
-from src.sentiment.sentiment_scorer import SentimentScorer
-from src.ingestor.statement_ingestor import StatementIngestor
-from src.ingestor.pressconf_ingestor import PressConfIngestor
-from src.models.transcript import Transcript
-from src.tools.logging_config import get_logger
-from src.models.fomc_event import FOMCEvent
+from ..sentiment.sentiment_scorer import SentimentScorer
+from ..ingestor.statement_ingestor import StatementIngestor
+from ..ingestor.pressconf_ingestor import PressConfIngestor
+from ..models.transcript import Transcript
+from ..tools.logging_config import get_logger
+from ..models.fomc_event import FOMCEvent
 
 logger = get_logger(__name__)
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 from bs4 import BeautifulSoup
 
-from src.tools.logging_config import get_logger
+from ..tools.logging_config import get_logger
 
 logger = get_logger(__name__)
 

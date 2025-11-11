@@ -4,8 +4,8 @@ from pathlib import Path
 from datetime import datetime
 from bs4 import BeautifulSoup
 from pdfminer.high_level import extract_text
-from src.tools.chunker import Chunker
-from src.models.transcript import Transcript
+from ..tools.chunker import Chunker
+from ..models.transcript import Transcript
 from abc import ABC
 
 

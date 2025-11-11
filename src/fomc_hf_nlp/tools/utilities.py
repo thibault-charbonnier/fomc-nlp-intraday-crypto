@@ -1,8 +1,8 @@
 import logging, sys
 from typing import List, Any
 import pandas as pd
-from src.models.fomc_event import FOMCEvent
-from src.tools.logging_config import get_logger
+from ..models.fomc_event import FOMCEvent
+from ..tools.logging_config import get_logger
 import random
 import ast
 import json
@@ -61,10 +61,5 @@ def print_event_reactions() -> None:
         print(f"NLP scoring for statement file : {event.score_stmt}")
         print(f"NLP scoring for press conference transcript : {event.score_qa}")
         print(event.reactions)
-        # for symbol, reactions in event.reactions.items():
-        #     print(f"  Reactions for {symbol}:")
-        #     print(reactions)
-            # for window, ret in reactions.items():
-            #     print(f"    +{window} min: {ret:.2f} bps")
         print("-" * 40)
     

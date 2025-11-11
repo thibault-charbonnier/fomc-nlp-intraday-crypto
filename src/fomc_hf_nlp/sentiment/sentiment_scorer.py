@@ -5,7 +5,7 @@ from numpy import mean
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers.utils import logging as hf_logging
 from time import time
-from src.tools.logging_config import get_logger
+from ..tools.logging_config import get_logger
 
 logger = get_logger(__name__)
 

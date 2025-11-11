@@ -3,9 +3,9 @@ import pandas as pd
 import numpy as np
 from datetime import timedelta, datetime
 from typing import List
-from src.tools.logging_config import get_logger
-from src.market.market_loader import MarketDataLoader
-from src.models.fomc_event import FOMCEvent
+from ..tools.logging_config import get_logger
+from .market_loader import MarketDataLoader
+from ..models.fomc_event import FOMCEvent
 
 logger = get_logger(__name__)
 
